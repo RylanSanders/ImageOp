@@ -1,0 +1,408 @@
+package imageOp;
+
+import java.awt.Color;
+import java.awt.Graphics;
+import java.awt.Image;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import javax.imageio.ImageIO;
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+
+import imageOp.Data2Test.ImageFrame;
+import imageOp.Operations.FileOperation;
+
+public class ImageOperation extends Operation<BufferedImage>{
+	public ImageOperation(BufferedImage state) {
+		super(state);
+		if(state==null) {
+			System.out.println("Issue: Null State");
+		}
+	}
+	
+	public void showImage() {
+		BufferedImage tmp = (BufferedImage)state;
+		JFrame frame = new JFrame();
+		frame.setSize(tmp.getWidth(), tmp.getHeight());
+		frame.add(new ImagePanel(tmp));
+		frame.setVisible(true);
+	}
+	
+	public void showImage(ImageFrame frame) {
+		frame.switchImage(state);
+		frame.repaint();
+	}
+	
+	public ImageOperation toColorSpace(int colorSpaceConstant) {
+		BufferedImage newImg = ImageUtil.toDifferentColorSpace(state, colorSpaceConstant);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation toPixelImage(int width, int height) {
+		BufferedImage newImg = ImageUtil.toPixelImage(state, width, height);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation toPixelImage(double percentage) {
+		BufferedImage newImg = ImageUtil.toPixelImage(state, percentage);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation rescaleImage(int width, int height) {
+		BufferedImage newImg = ImageUtil.rescaleImage(state, width, height);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation rescaleImage(double percentage) {
+		BufferedImage newImg = ImageUtil.rescaleImage(state, percentage);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation boxBlurImage(int radius) {
+		BufferedImage newImg = ImageUtil.boxBlurImage(state, radius);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation gaussianBlurImage(int radius, boolean horizontal) {
+		BufferedImage newImg = ImageUtil.optimizedGaussianBlurImage(state, radius, horizontal);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation changeBrightness(float brightness) {
+		BufferedImage newImg = ImageUtil.changeBrightness(state, brightness);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation simpleSharpen() {
+		BufferedImage newImg = ImageUtil.simpleShapenImage(state);
+		return new ImageOperation(newImg);
+	}
+	
+	public ImageOperation tolerancePixelize(int tol, int pix) {
+		ToleranceColorSelector c = new ToleranceColorSelector(state, tol, pix);
+		BufferedImage img = c.getImage();
+		return new ImageOperation(img);
+	}
+	
+	public ImageOperation detectEdges(int threshold1, int threshold2) {
+		return executePythonScript(Script.EdgeDetection, Double.toString(threshold1), Double.toString(threshold2));
+	}
+	
+	//For separating the foreground and the background
+	public ImageOperation OtsuImageThreshold() {
+		return executePythonScript(Script.OtsuImageThreshold);
+	}
+	
+	public ImageOperation dilate(int kernel, int iterations) {
+		return executePythonScript(Script.Dilation, Integer.toString(kernel), Integer.toString(iterations));
+	}
+	
+	public ImageOperation erode(int kernel, int iterations) {
+		return executePythonScript(Script.Erosion, Integer.toString(kernel), Integer.toString(iterations));
+	}
+	
+	public ImageOperation maskComposite(BufferedImage mask) {
+		UUID uuid = UUID.randomUUID();
+        String maskFileString = new File(CmdUtil.TMP_DIR + uuid.toString() + ".png").getAbsolutePath();
+        try {
+			ImageIO.write(mask, "PNG", new File(maskFileString));
+			return executePythonScript(Script.MaskComposite, maskFileString);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return null;
+	}
+	
+	public ImageOperation map(Function<BufferedImage, BufferedImage> func) {
+		state = func.apply(state);
+		return this;
+	}
+	
+	public ImageOperation pixelOperation(int group_width, int group_height, Function<PixelGroup, PixelGroup> func) {
+		List<PixelGroup> groups = getSquarePixelGroups(group_width, group_height);
+		List<PixelGroup> changes = groups.stream().map(func).collect(Collectors.toList());
+		state = applyPixelGroups(changes);
+		return this;
+	}
+	
+	public ImageOperation kernelPixelOperation(int kernel_width, int kernel_height, Function<PixelGroup, PixelGroup> func) {
+		List<PixelGroup> groups = getSquarePixelGroups(state.getWidth()/kernel_width, state.getHeight()/kernel_height);
+		List<PixelGroup> changes = groups.stream().map(func).collect(Collectors.toList());
+		state = applyPixelGroups(changes);
+		return this;
+	}
+	
+	public ImageOperation singlePixelOperation(Function<Pixel, Pixel> func) {
+		List<PixelGroup> groups = getSquarePixelGroups(1, 1);
+		List<Pixel> changes = groups.stream().map(group->group.pixels).flatMap(lst->lst.stream()).map(func).collect(Collectors.toList());
+		return applyPixelChanges(changes);
+	}
+	
+	public ListOperation<Pixel> toPixelList() {
+		 List<Pixel> pixels = getSquarePixelGroups(1,1).get(0).pixels;
+		 ListOperation<Pixel> op = new ListOperation<Pixel>(pixels);
+		 return op;
+	}
+	
+	
+	private List<PixelGroup> getSquarePixelGroups(int p_width, int p_height){
+		List<PixelGroup> toRet = new ArrayList<>();
+		
+		int width = state.getWidth();
+		int height = state.getHeight();
+		int wdp = width/p_width;
+		int hdp = height/p_height;
+		int x = 0, y = 0;
+		while(x<width) {
+			y=0;
+			while(y<height) {
+				int[][] pix = getRGBV2(x, y, wdp, hdp, state);
+				toRet.add(new PixelGroup( pix, x, y));
+				y+=hdp;
+			}
+			x+=wdp;
+		}
+		return toRet;
+		
+	}
+	
+	
+	private int[][] getRGBV2(int startX, int startY, int width, int height, BufferedImage img) {
+		int[][] pix = new int[height][width];
+		for(int y =0;y<height;y++) {
+			for(int x=0;x<width;x++) {
+				if(x+startX<state.getWidth() && y+startY<state.getHeight())
+					pix[y][x] = img.getRGB(x+startX, y+startY);
+				else pix[y][x] = Integer.MIN_VALUE;
+			}
+		}
+		return pix;
+	}
+	
+	private BufferedImage applyPixelGroups(List<PixelGroup> changes) {
+		BufferedImage newState = ImageUtil.deepCopy(state);
+		for(PixelGroup change: changes) {
+			List<Pixel> pixels = change.getPixels();
+			for(Pixel p: pixels) {
+
+				try {
+				newState.setRGB(p.x, p.y,p.color);
+				} catch(ArrayIndexOutOfBoundsException e) {
+					System.out.println("Pixel out of bounds in apply Pixel Groups: " + p.getPoint() + " Color: " + p.color);
+				}
+				
+			}
+		}
+		return newState;
+	}
+	
+	public ImageOperation applyPixelChanges(List<Pixel> changes) {
+		BufferedImage newState = ImageUtil.deepCopy(state);
+		for(Pixel p: changes) {		
+			try {
+			newState.setRGB(p.x, p.y,p.color);
+			} catch(ArrayIndexOutOfBoundsException e) {
+				System.out.println("Pixel out of bounds in apply Pixel Changes: " + p.getPoint() + " Color: " + p.color);
+			}
+		}
+		return new ImageOperation(newState);
+	}
+	
+	
+	public enum AdvMorphoOps{
+		opening, closing, morphological_gradient, top_hat, black_hat;
+	}
+	public ImageOperation advMorpho(AdvMorphoOps operation, int kernel, int iterations) {
+		return executePythonScript(Script.AdvOp, operation.name(), Integer.toString(kernel), Integer.toString(iterations));
+	}
+	
+	public ImageOperation executePythonScript(Script script, String ... args) {
+		BufferedImage newImg = CmdUtil.getPythonImageOutput(state, script, args);
+		return new ImageOperation(newImg);
+	}
+	
+	public BufferedImage img() {
+		return state;
+	}
+	
+	public FileOperation toFile(String path) {
+		try {
+			ImageIO.write(state, "PNG", new FileOutputStream(path));
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		return new FileOperation(new File(path));
+	}
+	
+	public ImageOperation aside(Consumer<ImageOperation> c) {
+		c.accept(this);
+		return new ImageOperation(state);
+	}
+	
+}
+class ImagePanel extends JPanel{
+	BufferedImage img;
+	public ImagePanel(BufferedImage img) {
+		setSize(img.getWidth(), img.getHeight());
+		this.img = img;
+	}
+	public ImagePanel() {
+	}
+	
+	@Override
+	public void paintComponent(Graphics g) {
+		g.drawImage(img, 0, 0, null);
+	}
+	
+	public void switchImage(BufferedImage img) {
+		this.img = img;
+		setSize(img.getWidth(), img.getHeight());
+		repaint();
+	}
+}
+class PixelGroup{
+	List<Pixel> pixels;
+	int height, width;
+	public PixelGroup(int height, int width) {
+		this.height = height;
+		this.width = width;
+		pixels = new ArrayList<>();
+	}
+	
+	public PixelGroup(int[][] passedInPixels, int xOffset, int yOffset) {
+		pixels = new ArrayList<>();
+		for(int y=0;y<passedInPixels.length;y++) {
+			for(int x=0;x<passedInPixels[y].length;x++) {
+				if(xOffset<0)
+					xOffset=0;
+				if(yOffset<0)
+					yOffset=0;
+				if(passedInPixels[y][x]!=Integer.MIN_VALUE)
+					pixels.add(new Pixel(x+xOffset,y+yOffset,passedInPixels[y][x]));
+			}
+		}
+	}
+	
+	public PixelGroup(List<Pixel> pixels) {
+		this.pixels = pixels;
+	}
+	
+	public List<Pixel> getPixels() {
+		return pixels;
+	}
+	
+	public static PixelGroup getSingle(int x, int y, Color c) {
+		List<Pixel> pix = new ArrayList<Pixel>();
+		pix.add(new Pixel(x,y,c.getRGB()));
+		return new PixelGroup(pix);
+	}
+	
+	public static PixelGroup getSingle(Pixel p) {
+		List<Pixel> pix = new ArrayList<Pixel>();
+		pix.add(p.clone());
+		return new PixelGroup(pix);
+	}
+	
+	
+	public Color intToColor(int col) {
+		int a = ((col >>24) & 0xFF);
+		int r = ((col >>16) & 0xFF);
+		int g = ((col >>8) & 0xFF);
+		int b = ((col >>0) & 0xFF);
+		return new Color(r,g,b);
+	}
+	
+	public Color getAvgColor() {
+		int r = pixels.stream().mapToInt(p->p.getR()).sum();
+		int g = pixels.stream().mapToInt(p->p.getG()).sum();
+		int b = pixels.stream().mapToInt(p->p.getB()).sum();
+		int size = pixels.size();
+		return new Color(r/size,g/size,b/size);
+	}
+	
+}
+
+class Pixel{
+	public int color;
+	public int x;
+	public int y;
+	
+	public Pixel(int x,int y,int color) {
+		this.x = x;
+		this.y=y;
+		this.color = color;
+	}
+	
+	public Color getColor() {
+		int a = ((color >>24) & 0xFF);
+		int r = ((color >>16) & 0xFF);
+		int g = ((color >>8) & 0xFF);
+		int b = ((color >>0) & 0xFF);
+		return new Color(r,g,b);
+	}
+	
+	public int getIntColor() {
+		return color;
+	}
+	
+	public Point getPoint() {
+		return new Point(x,y);
+	}
+	
+	public int getR() {
+		return getColor().getRed();
+	}
+	
+	public int getG() {
+		return getColor().getGreen();
+	}
+	
+	public int getB() {
+		return getColor().getBlue();
+	}
+	
+	public void setColor(Color c) {
+		this.color = c.getRGB();
+	}
+	
+	public void changeRGB(String rgb, int amount) {
+		Color c = getColor();
+		int r = c.getRed();
+		int g = c.getGreen();
+		int b = c.getBlue();
+		if(rgb.toLowerCase().equals("r")) {
+			r+=amount;
+			r = Math.min(r, 255);
+		}
+		else if(rgb.toLowerCase().equals("g")) {
+			g+=amount;
+			g = Math.min(r, 255);
+		}
+		else if(rgb.toLowerCase().equals("b")) {
+			b+=amount;
+			b = Math.min(r, 255);
+		}
+		setColor(new Color(r,g,b));
+	}
+	
+	@Override
+	public Pixel clone() {
+		return new Pixel(x,y,color);
+	}
+	
+	
+}

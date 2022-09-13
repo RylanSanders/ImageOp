@@ -1,0 +1,12 @@
+package imageOp;
+
+public class CustomCollectors {
+//toGIF
+//toCompositeImage
+	
+	// try to find a way to string together operations as they are executing so you could reuse the whole string
+	
+	//Maybe some kind of Grid/Entity Operations class for drawing
+	
+	
+}

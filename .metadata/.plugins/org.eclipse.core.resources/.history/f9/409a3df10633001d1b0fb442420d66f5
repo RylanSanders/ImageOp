@@ -1,0 +1,83 @@
+package imageOp.Operations;
+
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import imageOp.Operations.Operation;
+
+public class ListOperation<T> extends Operation<List<T>>{
+
+	private Consumer<T> monitorBehavior;
+	public ListOperation(List<T> state) {
+		super(state);
+		// TODO Auto-generated constructor stub
+	}
+	
+	public <R> R collect(Supplier<R> supplier,BiConsumer<R,? super T> accumulator){
+		//Creates an empty accumulator
+		R result = supplier.get();
+	     for (T element : state)
+	         accumulator.accept(result, element);
+	     return result;
+	}
+	
+	public <R> R collect(Function<List<T>,R> function) {
+		return function.apply(state);
+	}
+	
+	public void consume(Consumer<List<T>> action) {
+		action.accept(state);
+	}
+	
+	public <R> ListOperation<R> map(Function<T, R> mapping){
+		List<R> toRet = new ArrayList<>();
+		for(T element: state) {
+			toRet.add(mapping.apply(element));
+			if(monitorBehavior!=null)
+				monitorBehavior.accept(element);
+		}
+		return new ListOperation<>(toRet);
+	}
+	
+	public void forEach(Consumer<T> action) {
+		state.forEach(action);
+	}
+	
+	public ListOperation<T> monitor(Consumer<T> action){
+		monitorBehavior = action;
+		return this;
+	}
+	
+	public ListOperation<T> aside(Consumer<ListOperation<T>> c){
+		c.accept(this);
+		return new ListOperation<T>(state);
+	}
+	
+	public ListOperation<T> filter(Predicate<T> predicate){
+		return new ListOperation<T>(state.stream().filter(predicate).collect(Collectors.toList()));
+	}
+	
+	public ListOperation<T> modify(Function<List<T>,List<T>> groupSelector, Consumer<T> modifier){
+		List<T> selectedGroup = groupSelector.apply(state);
+		selectedGroup.forEach(modifier);
+		return new ListOperation<T>(state);
+	}
+	
+	public <R> R buildOperation(Function<List<T>, R> builder){
+		return builder.apply(state);
+	}
+	
+	public Stream<T> stream(){
+		return state.stream();
+	}
+
+
+}

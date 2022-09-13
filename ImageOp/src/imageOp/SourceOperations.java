@@ -1,0 +1,32 @@
+package imageOp;
+
+import java.awt.Color; 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Function;
+
+public class SourceOperations {
+
+	//Put all sources in here
+	public static FileOperation fileSource(String filePath){
+		return new FileOperation(new File(filePath));
+	}
+	
+	public static ListOperation<Integer> generateIntListOp(int start, int end, Function<Integer, Integer> function){
+		List<Integer> nums = new ArrayList<>();
+		for(int i=start;i<end;i=function.apply(i)) {
+			nums.add(i);
+		}
+		return new ListOperation<>(nums);
+	}
+	
+	public static ImageOperation imgSource(BufferedImage img) {
+		return new ImageOperation(img);
+	}
+	
+	public static ImageOperation perlinImageSrc(int width, int height, double step, double amp, Function<Double, Color> getColor) {
+		return new ImageOperation(ImprovedPerlinNoise.generatePerlinNoiseImage(width, height, step, amp, getColor));
+	}
+}

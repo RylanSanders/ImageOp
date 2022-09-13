@@ -1,0 +1,28 @@
+package imageOp;
+
+import java.awt.image.BufferedImage;
+import java.io.File;
+
+import javax.imageio.ImageIO;
+
+import imageOp.Operations.ImageOperation;
+import imageOp.Operations.Operation;
+
+public class FileOperation extends Operation<File> {
+	public FileOperation(File state) {
+		super(state);
+	}
+	
+	//TODO could make this a lambda expression and store it as a member so that you don't need parenthesis on call
+	public ImageOperation FileToImg(){
+		try {
+			//TODO for now just cast later make separate Classes deriving from Operation for each different return type
+			//Put generic methods into Operation
+			//Sources go into Operations
+		return new ImageOperation(ImageIO.read(state));
+		}catch(Exception e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+}

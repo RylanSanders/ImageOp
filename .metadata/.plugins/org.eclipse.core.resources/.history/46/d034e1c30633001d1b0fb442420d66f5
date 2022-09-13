@@ -1,0 +1,763 @@
+package imageOp;
+
+import java.awt.Color;
+import java.awt.Graphics;
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
+
+import javax.swing.JFrame;
+
+import util.ThreadUtil;
+import util.GUIImageUtil;
+
+public class Geometry {
+
+	// To find orientation of ordered triplet (p, q, r).
+	// The function returns following values
+	// 0 --> p, q and r are collinear
+	// 1 --> Clockwise
+	// 2 --> Counterclockwise
+	static int orientation(Point p, Point q, Point r)
+	{
+	    // This formula was sourced from https://www.geeksforgeeks.org/orientation-3-ordered-points/ 
+	    double val = (q.y - p.y) * (r.x - q.x) -
+	            (q.x - p.x) * (r.y - q.y);
+	 
+	    if (val == 0) return 0; // collinear
+	 
+	    return (val > 0)? 1: 2; // clock or counterclock wise
+	}
+	
+	
+	static List<Segment> convexHull(List<Point> points){
+		Point start = points.stream().min((p1,p2)->(int)(p1.x-p2.x)).get();
+		Point currentPoint = start;
+		boolean started = false;
+		List<Segment> perimeter = new ArrayList<>();
+		while(currentPoint!=start || !started) {
+			started = true;
+			Point nextPoint = null;
+			for(Point p: points) {
+				if(!p.equals(currentPoint)) {
+				boolean foundPoint = true;
+				for(Point q: points) {
+					if(!p.equals(q) && !q.equals(currentPoint)) {
+						if(Geometry.orientation(currentPoint, q, p)!=2) {
+							foundPoint = false;
+							break;
+						}
+					}
+				}
+				
+				if(foundPoint) {
+					nextPoint=p;
+					break;
+				}
+			}
+			}
+			perimeter.add(new Segment(currentPoint, nextPoint));
+			currentPoint=nextPoint;
+			
+		}
+		return perimeter;
+	}
+	
+	static int distance(Point p1, Point p2) {
+		return (int) (Math.sqrt((Math.pow(p1.x-p2.x, 2)) + Math.pow(p1.y-p2.y, 2)));
+	}
+	
+	static Circle getCircumCircle(Triangle t) {
+		 LinearLine l1 = Geometry.getPerpendicularBisector(t.s1);
+		 LinearLine l2 = Geometry.getPerpendicularBisector(t.s2);
+		 Point circumCenter = l1.intersects(l2);
+		 int rad = distance(circumCenter, t.p1);
+		 return new Circle(circumCenter, rad);
+	}
+	
+	static Point midpoint(Segment s) {
+		return new Point((int)(((double)(s.p1.x+s.p2.x))/2.0), (int)(((double)(s.p1.y+s.p2.y))/2.0));
+	}
+	
+	static double getSlope(Segment s) {
+		return ((double)(s.p1.y-s.p2.y))/((double)(s.p1.x-s.p2.x));
+	}
+	
+	static LinearLine getPerpendicularBisector(Segment s) {
+		Point mid = midpoint(s);
+		double m = -1.0/getSlope(s);
+		int b = (int)(mid.y-mid.x*m);
+		return new LinearLine(m,b, 0, 10);
+	}
+	
+	
+	static List<Triangle> delaunayTriangulation(Triangle superTriangle, List<Point> points){
+		List<Triangle> triangles = new ArrayList<>();
+		triangles.add(superTriangle);
+		for(Point p: points) {
+			List<Triangle> addTriangles = new ArrayList<>();
+			List<Triangle> removeTriangles = new ArrayList<>();
+			ThreadUtil.startTimer();
+			for(Triangle t: triangles) {
+				Circle c = Geometry.getCircumCircle(t);
+				if(c.containsPoint(p)) {
+					addTriangles.addAll(Geometry.getNewTrianglesCombo(p, t.getPoints()));
+					if(t!=superTriangle)
+						removeTriangles.add(t);
+				}
+			}
+			ThreadUtil.chainTime("First Loop: ");
+			int size = triangles.size();
+			for(int i=0;i<size;i++) {
+				Triangle t = triangles.get(i);
+				for(int y=i+1;y<size;y++) {
+					if(t.equals(triangles.get(y))) {
+						triangles.remove(i);
+						size--;
+						i--;
+						break;
+					}
+				}
+			}
+			ThreadUtil.chainTime("Second Loop: ");
+			triangles.removeAll(removeTriangles);
+			triangles.addAll(addTriangles);
+			System.out.println("Done with Point: " + p);
+			System.out.println("Num Triangles: " + triangles.size());
+		}
+		
+		List<Triangle> removeTriangles = new ArrayList<>();
+		removeTriangles.add(superTriangle);
+		for(Triangle t: triangles) {
+			if(trianglesContainSameVertex(superTriangle, t)) {
+				removeTriangles.add(t);
+			}
+		}
+		
+
+		
+		//remove dupes
+		for(Triangle t: triangles) {
+			for(Triangle t2: triangles) {
+				if(t!=t2 && !removeTriangles.contains(t) && !removeTriangles.contains(t2) && t.equals(t2)) {
+					removeTriangles.add(t);
+				}
+			}
+		}
+
+		
+		triangles.removeAll(removeTriangles);
+		
+		return triangles;
+		
+	}
+	
+	public static List<Triangle> delanyTriangulationV2(List<Point> pts) {
+		List<Vector2D> vecs = pts.stream().map(p->new Vector2D(p.intX,p.intY)).collect(Collectors.toList());
+		DelaunayTriangulator triangulator = new DelaunayTriangulator(vecs);
+		try {
+			triangulator.triangulate();
+		} catch (NotEnoughPointsException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return triangulator.getTriangles().stream().map(t->new Triangle(t)).collect(Collectors.toList());
+	}
+	
+	private static boolean trianglesContainSameVertex(Triangle t1, Triangle t2) {
+		List<Point> v1 = t1.getPoints();
+		List<Point> v2 = t2.getPoints();
+		
+		return v1.stream().anyMatch(v->v2.contains(v));
+	}
+	
+	//returns a list of 2 triangles that is made with every combination of 2 of the added vertices and the point p
+	private static List<Triangle> getNewTrianglesCombo(Point p, List<Point> addedVertices){
+		List<Triangle> toRet = new ArrayList<>();
+		toRet.add(new Triangle(p, addedVertices.get(0), addedVertices.get(1)));
+		toRet.add(new Triangle(p, addedVertices.get(1), addedVertices.get(2)));
+		toRet.add(new Triangle(p, addedVertices.get(2), addedVertices.get(0)));
+		
+		
+		return toRet; 
+	}
+	
+	public static void main(String[] args) {
+
+		delauny2();
+	}
+	
+	public static void delauny2() {
+		
+		
+		List<IDrawable> shapes = new ArrayList<>();
+		IntStream.generate(()->(int)(Math.random()*300+100))
+		.limit(15)
+		.boxed()
+		.map(i->new Point(i, (int)(Math.random()*300+100)))
+		.forEach(p->shapes.add(p));
+		
+		List<Point> ps = shapes.stream().map(p->(Point)p).collect(Collectors.toList());
+		
+		List<Triangle> tris = Geometry.delanyTriangulationV2(ps);
+		
+		BufferedImage b = new BufferedImage(500, 500, BufferedImage.TYPE_INT_ARGB);
+		Graphics g = b.getGraphics();
+		g.setColor(Color.white);
+		g.fillRect(0, 0, 500,500);
+		
+		tris.forEach(s->s.draw(g));
+		
+		GUIImageUtil.getImageFrame(b);
+	}
+	
+	//For Testing how long an operation takes
+	public static void timerTestMain() {
+		List<Triangle> triangles = Stream.generate(()->Triangle.getRandomTriangle(1000, 1000)).limit(10000).collect(Collectors.toList());
+		//triangles = new ArrayList<>();
+		//Triangle tt = new Triangle(100,200,250,93,300,400);
+		//triangles.add(tt);
+		//triangles.add(tt);
+		//triangles.add(new Triangle(100,200,1,93,300,400));
+		
+		ThreadUtil.startTimer();
+		//Remove Dupes
+		int size = triangles.size();
+		for(int i=0;i<size;i++) {
+			Triangle t = triangles.get(i);
+			for(int y=i+1;y<size;y++) {
+				if(t.equals(triangles.get(y))) {
+					triangles.remove(i);
+					size--;
+					i--;
+					break;
+				}
+			}
+		}
+		
+		
+		ThreadUtil.printTime();
+	}
+	
+	public static void delaunyMain() {
+		List<IDrawable> shapes = new ArrayList<>();
+		IntStream.generate(()->(int)(Math.random()*300+100))
+		.limit(15)
+		.boxed()
+		.map(i->new Point(i, (int)(Math.random()*300+100)))
+		.forEach(p->shapes.add(p));
+		
+		List<Point> ps = shapes.stream().map(p->(Point)p).collect(Collectors.toList());
+		
+		//shapes.removeAll(shapes);
+		Segment testSeg = new Segment(100,100,400,400);
+		Point mid = Geometry.midpoint(testSeg);
+		shapes.add(testSeg);
+		shapes.add(mid);
+		
+		Line perp = Geometry.getPerpendicularBisector(testSeg);
+		perp.recalculate(0, 400, 10);
+		shapes.add(perp);
+		
+		Triangle tr = new Triangle(100,200,250,93,300,400);
+		//shapes.addAll(Geometry.convexHull(ps));
+		shapes.add(tr);
+		shapes.add(Geometry.getCircumCircle(tr));
+		
+		//Intersect testing
+		LinearLine l = new LinearLine(0.5,10,0,400, 50);
+		LinearLine l2 = new LinearLine(0.75,-100,0,400, 50);
+		Point p = l.intersects(l2);
+		shapes.add(l);
+		shapes.add(l2);
+		shapes.add(p);
+		
+		//CircumCircle Test
+		Triangle t = new Triangle(100,200,250,93,300,400);
+		LinearLine pl1 = Geometry.getPerpendicularBisector(t.s1);
+		LinearLine pl2 = Geometry.getPerpendicularBisector(t.s2);
+		Circle c = Geometry.getCircumCircle(t);
+		
+		BufferedImage b = new BufferedImage(500, 500, BufferedImage.TYPE_INT_ARGB);
+		Graphics g = b.getGraphics();
+		g.setColor(Color.white);
+		g.fillRect(0, 0, 500,500);
+		//shapes.forEach(s->s.drawAll(g));
+		//t.draw(g);
+		System.out.println(Arrays.toString(t.getAngles()));
+		/*pl1.draw(g);
+		pl2.draw(g);
+		c.draw(g);*/
+		
+		List<Triangle> delaunay = Geometry.delaunayTriangulation(new Triangle(200,-500,1000,1000,-500,1000), ps);
+		ps.forEach(point->point.draw(g));
+		delaunay.forEach(tri->tri.draw(g));
+		
+		
+		
+		//Quadrilateral q= new Quadrilateral(new Point(100,100),new Point(100,400),new Point(400,400),new Point(400,100));
+		//q.triangleSplit(new Point(100,400)).forEach(tri->tri.draw(g));
+		
+		//delaunay.forEach(tri->Geometry.getCircumCircle(tri).draw(g));
+		GUIImageUtil.getImageFrame(b);
+		
+	}
+}
+
+interface IDrawable{
+	public void draw(Graphics g);
+	public void drawAll(Graphics g);
+}
+
+class Point implements IDrawable{
+	double x, y;
+	int intX, intY;
+	
+	public Point(double x, double y) {
+		this.x = x;
+		this.y = y;
+		this.intX = (int)x;
+		this.intY = (int)y;
+	}
+	
+	private int size = 5;
+	public void draw(Graphics g) {
+		g.setColor( Color.red);
+		g.fillOval((int)(x-size/2), (int)(y-size/2), size, size);	
+		}
+	
+	@Override
+	public void drawAll(Graphics g) {
+		draw(g);
+	}
+	
+	@Override
+	public boolean equals(Object o) {
+		try {
+			Point p = (Point)o;
+			return p.x==x && p.y==y;
+		}catch(Exception e) {
+			return false;
+		}
+	}
+	
+	@Override
+	public String toString() {
+		return "P1: " + x + ", P2: " + y;
+	}
+}
+
+class Segment implements IDrawable{
+	Point p1, p2;
+	
+	public Segment(int x1, int y1, int x2, int y2) {
+		p1=new Point(x1,y1);
+		p2=new Point(x2, y2);
+	}
+	
+	public Segment(Point p1, Point p2) {
+		this.p1 = p1;
+		this.p2 = p2;
+	}
+	
+	public void draw(Graphics g) {
+		g.setColor(Color.black);
+		g.drawLine(p1.intX,p1.intY,p2.intX,p2.intY);
+	}
+	
+	@Override
+	public void drawAll(Graphics g) {
+		p1.drawAll(g);
+		p2.drawAll(g);
+		draw(g);
+		
+	}
+	
+	public boolean onSegment( Point q)
+	{
+	    if (q.x <= Math.max(p1.x, p2.x) && q.x >= Math.min(p1.x, p2.x) &&
+	        q.y <= Math.max(p1.y, p2.y) && q.y >= Math.min(p1.y, p2.y))
+	    return true;
+	 
+	    return false;
+	}
+	
+	// The main function that returns true if line segment 'p1q1'
+	// and 'p2q2' intersect.
+	public boolean intersects( Point p2, Point q2)
+	{
+		Point q1=p2;
+	    // Find the four orientations needed for general and
+	    // special cases
+	    int o1 = Geometry.orientation(p1, q1, p2);
+	    int o2 = Geometry.orientation(p1, q1, q2);
+	    int o3 = Geometry.orientation(p2, q2, p1);
+	    int o4 = Geometry.orientation(p2, q2, q1);
+	 
+	    // General case
+	    if (o1 != o2 && o3 != o4)
+	        return true;
+	 
+	    // Special Cases
+	    // p1, q1 and p2 are collinear and p2 lies on segment p1q1
+	    if (o1 == 0 && onSegment(p2)) return true;
+	 
+	    // p1, q1 and q2 are collinear and q2 lies on segment p1q1
+	    if (o2 == 0 && onSegment(q2)) return true;
+	 
+	    // p2, q2 and p1 are collinear and p1 lies on segment p2q2
+	    if (o3 == 0 && onSegment(p1)) return true;
+	 
+	    // p2, q2 and q1 are collinear and q1 lies on segment p2q2
+	    if (o4 == 0 && onSegment(q1)) return true;
+	 
+	    return false; // Doesn't fall in any of the above cases
+	}
+	
+	public boolean isEndPoint(Point p) {
+		return p1.equals(p) || p2.equals(p);
+	}
+	
+	public boolean intersects(Segment s) {
+		return intersects(s.p1,s.p2);
+	}
+	
+	@Override
+	public boolean equals(Object o) {
+		try {
+			Segment c = (Segment)o;
+			return (c.p1.equals(p1) && c.p2.equals(p2)) ||(c.p1.equals(p2) && c.p2.equals(c.p1));
+		}catch(Exception e) {
+			return false;
+		}
+	}
+	
+	public double length() {
+		return Geometry.distance(p1, p2);
+	}
+	
+}
+
+class Circle implements IDrawable{
+	Point center;
+	int radius;
+	
+	public Circle(Point center, int radius) {
+		this.center = center;
+		this.radius = radius;
+	}
+	
+	public Circle(int x, int y, int radius) {
+		center = new Point(x, y);
+		this.radius = radius;
+	}
+
+	@Override
+	public void draw(Graphics g) {
+		g.setColor(Color.blue);
+		g.drawOval(center.intX-radius, center.intY-radius, radius*2, radius*2);
+		
+	}
+
+	@Override
+	public void drawAll(Graphics g) {
+		center.drawAll(g);
+		draw(g);
+		
+	}
+	
+	public boolean containsPoint(Point p) {
+		double dist = Geometry.distance(center, p);
+		return dist<radius;
+	}
+	
+	@Override
+	public boolean equals(Object o) {
+		try {
+			Circle c = (Circle)o;
+			return c.center.equals(center) && c.radius==radius;
+		}catch(Exception e) {
+			return false;
+		}
+	}
+}
+
+class Triangle implements IDrawable{
+	Point p1, p2, p3;
+	Segment s1,s2,s3;
+	
+	public Triangle(int p1x, int p1y, int p2x, int p2y, int p3x, int p3y) {
+		p1 = new Point(p1x,p1y);
+		p2 = new Point(p2x,p2y);
+		p3 = new Point(p3x,p3y);
+		pointsToSegments();
+	}
+	public Triangle(Point p1, Point p2, Point p3) {
+		this.p1 = p1;
+		this.p2 = p2;
+		this.p3 = p3;
+		pointsToSegments();
+	}
+	
+	public Triangle(Segment s1, Segment s2, Segment s3) {
+		this.s1 = s1;
+		this.s2 =s2;
+		this.s3 = s3;
+		segmentsToPoints();
+	}
+	
+	public Triangle(Triangle2D t) {
+		this.p1 = new Point(t.a.x, t.a.y);
+		this.p2 = new Point(t.b.x, t.b.y);
+		this.p3 = new Point(t.c.x, t.c.y);
+		pointsToSegments();
+	}
+	
+	private void pointsToSegments() {
+		s1 = new Segment(p1,p2);
+		s2 = new Segment(p2,p3);
+		s3 = new Segment(p3,p1);
+	}
+	
+	private void segmentsToPoints() {
+		p1 = s1.p1;
+		p2 = s1.p2;
+		if(s2.p1!=p1 && s2.p1!=p2)
+			p3=s2.p1;
+		else
+			p3=s2.p2;
+	}
+	
+	@Override
+	public void draw(Graphics g) {
+		s1.draw(g);
+		s2.draw(g);
+		s3.draw(g);
+	}
+
+	@Override
+	public void drawAll(Graphics g) {
+		p1.draw(g);
+		p2.draw(g);
+		p3.draw(g);
+		draw(g);
+	}
+	
+	//Requries p1=p1, p2=p2 which is stupid
+	@Override
+	public boolean equals(Object o) {
+		try {
+			Triangle t = (Triangle)o;
+			return t.p1.equals(p1)&&t.p2.equals(p2)&&t.p3.equals(p3);
+			}catch(Exception e) {
+			return false;
+		}
+	}
+	
+	public static Triangle getRandomTriangle(int min, int max) {
+		Random  r = new Random();
+		Triangle t = new Triangle(r.nextInt(), r.nextInt(), r.nextInt(), r.nextInt(), r.nextInt(), r.nextInt());
+		return t;
+	}
+	
+	public List<Point> getPoints(){
+		List<Point> toRet = new ArrayList<>();
+		toRet.add(p1);
+		toRet.add(p2);
+		toRet.add(p3);
+		return toRet;
+	}
+	
+	public List<Segment> getSegments(){
+		List<Segment> toRet = new ArrayList<>();
+		toRet.add(s1);
+		toRet.add(s2);
+		toRet.add(s3);
+		return toRet;
+	}
+	
+	public int[] getAngles() {
+		double b = Math.sqrt(Math.abs((-Math.pow(s3.length(), 2)+Math.pow(s1.length(), 2))/(2*s1.length())));
+		double sp = 2*s1.length();
+		double sl = Math.pow(s1.length(), 2);
+		double sd = -Math.pow(s3.length(), 2);
+		double la = b/s2.length();
+		double a1 = Math.toDegrees(Math.asin(b/s2.length()));
+		double a2 = Math.toDegrees(b/s3.length());
+		double a3 = 180-a2-a1;
+		return new int[] {(int)a1,(int)a2,(int)a3};
+	}
+	
+	@Override
+	public String toString() {
+		return "Points: " + getPoints().stream().map(p->p.toString()).collect(Collectors.joining(", "));
+	}
+	
+}
+class Line implements IDrawable{
+	Function<Integer, Integer> func;
+	List<Segment> subSegments;
+	List<Point> subPoints;
+	int resolution;
+	//TODO make this a new interface called IContainer that has a contains method
+	public Line(Function<Integer, Integer> func, int minX, int maxX, int resolution) {
+		this.resolution = resolution;
+		this.func = func;
+		recalculate(minX, maxX);
+	}
+	
+	public Line(Function<Integer, Integer> func, int minX, int maxX) {
+		this(func, minX, maxX, 1);
+	}
+	
+	public void recalculate(int minX, int maxX) {
+		subSegments = new ArrayList<>();
+		subPoints = new ArrayList<>();
+		int x=minX+resolution;
+		subPoints.add(new Point(minX, func.apply(minX)));
+		while(x<=maxX) {
+			Point newPoint = new Point(x, func.apply(x));
+			Point oldPoint = subPoints.get(subPoints.size()-1);
+			subSegments.add(new Segment(newPoint, oldPoint));
+			subPoints.add(newPoint);
+			x+=resolution;
+		}
+	}
+	
+	public void recalculate(int minX, int maxX, int resolution) {
+		this.resolution = resolution;
+		recalculate(minX, maxX);
+	}
+	
+	@Override
+	public void draw(Graphics g) {
+		subSegments.forEach(s->s.draw(g));
+		
+	}
+	@Override
+	public void drawAll(Graphics g) {
+		subPoints.forEach(s->s.draw(g));
+		
+		draw(g);
+	}
+	
+	
+}
+
+class LinearLine extends Line{
+	double slope;
+	int b;
+	public LinearLine(Function<Integer, Integer> func, int minX, int maxX) {
+		super(func, minX, maxX);
+	}
+	
+	public LinearLine(double slope, int b, int minX, int maxX) {
+		super(x->(int)(slope*x+b), minX, maxX);
+		this.slope = slope;
+		this.b = b;
+	}
+	public LinearLine(double slope, int b, int minX, int maxX, int resolution) {
+		super(x->(int)(slope*x+b), minX, maxX, resolution);
+		this.slope = slope;
+		this.b = b;
+	}
+	
+	public Point intersects(LinearLine l) {
+		if(b==l.b)
+			return new Point(Integer.MIN_VALUE, Integer.MIN_VALUE);
+		int x = (int)(((b-l.b)/l.slope)/(1-(slope/l.slope)));
+		int y = func.apply(x);
+		return new Point(x,y);
+	}
+	
+	@Override
+	public String toString() {
+		return "Slope: " + slope + ", B: " + b;
+	}
+	
+}
+
+class Square implements IDrawable{
+	int x,y,width,height;
+	//TODO make the points and segments that make up this square
+	
+	public Square(int x, int y, int width, int height) {
+		this.x = x;
+		this.y = y;
+		this.width = width;
+		this.height = height;
+	}
+	
+	@Override
+	public void draw(Graphics g) {
+		
+	}
+
+	@Override
+	public void drawAll(Graphics g) {
+		// TODO Auto-generated method stub
+		
+	}
+	
+	public boolean containsPoint(Point p) {
+		return isBetween(x,x+width, p.x) && isBetween(y,y+height,p.y);
+	}
+	
+	private boolean isBetween(double min,double max,double val) {
+		return val<max && val>min;
+	}
+	
+}
+
+class Quadrilateral{
+	Point p1,p2,p3,p4;
+	Segment s1,s2,s3,s4;
+	public Quadrilateral(Point p1, Point p2, Point p3, Point p4){
+		this.p1 = p1;
+		this.p2 = p2;
+		this.p3 = p3;
+		this.p4 = p4;
+		
+		s1 = new Segment(p1,p2);
+		s2 = new Segment(p2,p3);
+		s3 = new Segment(p3,p4);
+		s4 = new Segment(p4,p1);
+		
+	}
+	
+	public List<Triangle> triangleSplit(Point segP){
+		Point newPoint = getPoints().stream().filter(p->getSegments().stream().allMatch(s->!(s.isEndPoint(segP)&&s.isEndPoint(p)))).collect(Collectors.toList()).get(0);
+		List<Point> otherPoints = getPoints();
+		otherPoints.remove(segP);
+		otherPoints.remove(newPoint);
+		return otherPoints.stream().map(p->new Triangle(segP, newPoint, p)).collect(Collectors.toList());
+	}
+	
+	public List<Segment> getSegments(){
+		List<Segment> toRet = new ArrayList<>();
+		toRet.add(s1);
+		toRet.add(s2);
+		toRet.add(s3);
+		toRet.add(s4);
+		return toRet;
+	}
+	
+	public List<Point> getPoints(){
+		List<Point> toRet = new ArrayList<>();
+		toRet.add(p1);
+		toRet.add(p2);
+		toRet.add(p3);
+		toRet.add(p4);
+		return toRet;
+	}
+	
+	
+}

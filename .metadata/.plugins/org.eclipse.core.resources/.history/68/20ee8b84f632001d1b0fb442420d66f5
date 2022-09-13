@@ -1,0 +1,230 @@
+package imageOp;
+
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.Set;
+
+//TODO clean up
+public class ToleranceColorSelector {
+	private BufferedImage img;
+	private int tolerance, width, height, pix;
+	private int[][] colorArray;
+	private int loadPercent;
+
+	public ToleranceColorSelector(BufferedImage img, int tolerance, int pix) {
+		this.img = img;
+		this.tolerance = tolerance;
+		height = img.getHeight();
+		width = img.getWidth();
+		this.pix = pix;
+		generateColorArrayV3();
+	}
+	
+	/**
+	 * @Pre: The colSel thread is done running(is meant to be called by colSel)
+	 * @Post: colors finImg the colors selected by colSel
+	 */
+	public BufferedImage getImage() {
+		BufferedImage finImg = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		int wdp = width/pix;
+		int hdp = height/pix;
+		int x = 0, y = 0;
+		while(x<width) {
+			y=0;
+			while(y<height) {
+				int color = selectColor(x, y, wdp, hdp);
+				colorArea(finImg ,x,y, x+wdp, y+hdp, color );
+				y+=hdp;
+			}
+			x+=wdp;
+		}
+		return finImg;
+	}
+	/**
+	 * @Pre: finImg is not null
+	 * @Post: Colors the specified area the specified color onto finImg
+	 */
+	private void colorArea(BufferedImage img, int x1, int y1, int x2, int y2, int color) {
+		for(int x=x1;x<x2;x++) {
+			for(int y=y1;y<y2;y++) {
+				try {
+				img.setRGB(x, y, color);
+				} catch(Exception e) {}
+			}
+		}
+	}
+
+	public int selectColor(int x, int y, int w, int h) {
+		return colorArray[x / (width / pix)][y / (height / pix)];
+	}
+
+	/**
+	 * @Pre: BufferedImage img is not null
+	 * @Post: Returns the integer representation of the average color of the area
+	 *        indicated on img
+	 */
+
+	private int getAvg(int x, int y, int w, int h) {
+		ArrayList<Integer> pixels = new ArrayList<Integer>();
+		for (int i = 0; i < w; i++) {
+			for (int z = 0; z < h; z++) {
+				try {
+					int col = img.getRGB(i + x, z + y);
+					pixels.add(col);
+				} catch (Exception e) {
+				}
+			}
+		}
+		int a = 255;
+		int r = getAvgHelper(pixels, 16);
+		int g = getAvgHelper(pixels, 8);
+		int b = getAvgHelper(pixels, 0);
+		return (a << 24) + (r << 16) + (g << 8) + b;
+	}
+
+	private int getAvgHelper(ArrayList<Integer> list, int bit) {
+		int sum = 0;
+		for (int i = 0; i < list.size(); i++) {
+			int test = list.get(i);
+			sum += ((test >> bit) & 0xFF);
+		}
+		return sum / list.size();
+	}
+
+	/**
+	 * @Pre: BufferedImage img is not null
+	 * @Post: Returns an array of the average colors of each area
+	 */
+	private int[][] getAvgArray() {
+		int wdp = width / pix;
+		int hdp = height / pix;
+		int x = 0, y = 0;
+		int[][] avgArray = new int[width / wdp + 1][height / hdp + 1];
+		while (x < width) {
+			y = 0;
+			while (y < height) {
+				avgArray[x / wdp][y / hdp] = getAvg(x, y, wdp, hdp);
+				y += hdp;
+			}
+			x += wdp;
+		}
+		return avgArray;
+	}
+
+	/**
+	 * @Pre: optPnl, imgAna, and AppFrame(in ImageAnalyzer) cannot be null
+	 * @Post:Generates a an array of colors represented as integers to represent
+	 *                 each area(square) of the image. The color chosen is selected
+	 *                 by getting an average color of each area then comparing all
+	 *                 of the colors together and if certain colors are similar
+	 *                 enough they are grouped together as the same color.
+	 */
+	private void generateColorArrayV3() {
+		int[][] avgArray = getAvgArray();
+		ArrayList<Pair> pairs = new ArrayList<Pair>();
+		Hashtable<Integer, ArrayList<Pair>> groupings = new Hashtable<Integer, ArrayList<Pair>>();
+		for (int x = 0; x < avgArray.length; x++) {
+			for (int y = 0; y < avgArray[x].length; y++) {
+				pairs.add(new Pair(x, y));
+			}
+		}
+		Set<Integer> keys = groupings.keySet();
+		for (int i = 0; i < pairs.size(); i++) {
+			int col = avgArray[pairs.get(i).x][pairs.get(i).y];
+			boolean isFound = false;
+			Iterator<Integer> it = keys.iterator();
+			int minDif = Integer.MAX_VALUE;
+			int hold = 0;
+			while (it.hasNext()) {
+				int temp = it.next();
+				if (isInRange(col, temp)) {
+					int dif = getDif(col, temp);
+					if (dif < minDif) {
+						minDif = dif;
+						hold = temp;
+					}
+					isFound = true;
+				}
+
+			}
+			if (isFound) {
+				ArrayList<Pair> coords = groupings.get(hold);
+				coords.add(pairs.get(i));
+				groupings.put(hold, coords);
+			} else {
+				ArrayList<Pair> coords = new ArrayList<Pair>();
+				coords.add(pairs.get(i));
+				groupings.put(col, coords);
+				keys = groupings.keySet();
+			}
+		}
+		colorArray = new int[width / (width / pix) + 1][height / (height / pix) + 1];
+		Iterator<Integer> it = keys.iterator();
+		while (it.hasNext()) {
+			ArrayList<Pair> temp = groupings.get(it.next());
+			int avg = getListAvg(temp, avgArray);
+			for (int z = 0; z < temp.size(); z++) {
+				colorArray[temp.get(z).x][temp.get(z).y] = avg;
+			}
+
+		}
+	}
+
+	/**
+	 * @Pre:  col1 and col2 are valid integer representations of colors
+	 * @Post: Returns true if colors are similar enough so that the sum of the
+	 *        differences of their components is less than the tolerance.
+	 */
+	private boolean isInRange(int col1, int col2) {
+		int sum = 0;
+		sum += Math.abs(((col1 >> 16) & 0xFF) - ((col2 >> 16) & 0xFF));
+		sum += Math.abs(((col1 >> 8) & 0xFF) - ((col2 >> 8) & 0xFF));
+		sum += Math.abs((col1 & 0xFF) - (col2 & 0xFF));
+		return tolerance > sum;
+	}
+	/**
+	 * @Pre: col1 and col2 are valid integer representations of colors
+	 * @Post:Returns the summation of the differences of the components of the colors
+	 */
+	private int getDif(int col1, int col2) {
+		int sum = 0;
+		sum += Math.abs(((col1 >> 16) & 0xFF) - ((col2 >> 16) & 0xFF));
+		sum += Math.abs(((col1 >> 8) & 0xFF) - ((col2 >> 8) & 0xFF));
+		sum += Math.abs((col1 & 0xFF) - (col2 & 0xFF));
+		return sum;
+	}
+
+	/**
+	 * @Pre: img, list and avgArray are not null
+	 * @Post: returns the average integer representation of color of the list of colors
+	 */
+	private int getListAvg(ArrayList<Pair> list, int[][] avgArray) {
+		int toReturn = 0;
+		for (int i = 24; i >= 0; i -= 8) {
+			toReturn += (getListAvgHelper(list, avgArray, i) << i);
+		}
+		return toReturn;
+	}
+
+	private int getListAvgHelper(ArrayList<Pair> list, int[][] avgArray, int bit) {
+		int sum = 0;
+		for (int i = 0; i < list.size(); i++) {
+			int test = avgArray[list.get(i).x][list.get(i).y];
+			sum += ((test >> bit) & 0xFF);
+		}
+		return sum / list.size();
+	}
+
+	class Pair {
+		public int x, y;
+
+		public Pair(int x, int y) {
+			this.x = x;
+			this.y = y;
+		}
+	}
+
+}

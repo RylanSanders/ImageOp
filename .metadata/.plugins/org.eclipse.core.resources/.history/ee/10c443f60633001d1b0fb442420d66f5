@@ -1,0 +1,72 @@
+package imageOp.Operations;
+
+import java.awt.Color;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Point;
+import java.awt.image.BufferedImage;
+import java.util.List;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+
+import imageOp.IDrawable;
+import imageOp.ImageOperation;
+import imageOp.Pixel;
+
+public class OperationBuilders {
+
+	
+	public static Function<List<Pixel>, ImageOperation> PixelListToImage() {
+		Function<List<Pixel>, ImageOperation> builder = pixels->{
+				int maxX = pixels.stream().mapToInt(p->p.x).max().getAsInt();
+				int maxY = pixels.stream().mapToInt(p->p.y).max().getAsInt();
+				BufferedImage initial = new BufferedImage(maxX, maxY, BufferedImage.TYPE_INT_ARGB);
+				ImageOperation op = new ImageOperation(initial);
+				return op.applyPixelChanges(pixels);
+		};
+		
+		return builder;
+	}
+	
+	public static Function<List<Point>, ImageOperation> LinesToImage(){
+		Function<List<Point>, ImageOperation> builder = lines->{
+			int maxX = lines.stream().mapToInt(p->p.x).max().getAsInt();
+			int maxY = lines.stream().mapToInt(p->p.y).max().getAsInt();
+			BufferedImage initial = new BufferedImage(maxX, maxY, BufferedImage.TYPE_INT_ARGB);
+			Graphics2D g = (Graphics2D)initial.getGraphics();
+			for(int i=0;i<lines.size()-1;i++) {
+				g.setColor(Color.black);
+			g.drawLine(lines.get(i).x,  lines.get(i).y, lines.get(i+1).x, lines.get(i+1).y);
+			}
+			return new ImageOperation(initial);
+		};
+	return builder;
+	}
+	
+	public static Function<List<Point>, ImageOperation> LinesToImage(int maxX, int maxY){
+		Function<List<Point>, ImageOperation> builder = lines->{
+			BufferedImage initial = new BufferedImage(maxX, maxY, BufferedImage.TYPE_INT_ARGB);
+			Graphics2D g = (Graphics2D)initial.getGraphics();
+			for(int i=0;i<lines.size()-1;i++) {
+				g.setColor(Color.black);
+			g.drawLine(lines.get(i).x,  lines.get(i).y, lines.get(i+1).x, lines.get(i+1).y);
+			}
+			return new ImageOperation(initial);
+		};
+	return builder;
+	}
+	
+	public static Function<List<IDrawable>, ImageOperation> GeometryToImage(int maxX, int maxY){
+		Function<List<IDrawable>, ImageOperation> func = (drawables)->{
+		BufferedImage b = new BufferedImage(maxX, maxY, BufferedImage.TYPE_INT_ARGB);
+		Graphics g = b.getGraphics();
+		g.setColor(Color.white);
+		g.fillRect(0, 0, maxX,maxY);
+		
+		drawables.forEach(s->s.draw(g));
+		return new ImageOperation(b);
+		};
+		return func;
+	}
+	
+}
